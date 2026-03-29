@@ -2,6 +2,8 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 
 mod routes;
+mod models;
+mod services;
 
 #[tokio::main]
 async fn main() {
