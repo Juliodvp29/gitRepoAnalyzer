@@ -91,4 +91,19 @@ impl GitService {
         let days = (now - timestamp) / 86400;
         Some(days)
     }
+
+    pub fn count_contributors(&self, repo_path: &PathBuf) -> u32 {
+        let output = Command::new("git")
+            .args(["-C", repo_path.to_str().unwrap(), "shortlog", "-sn", "--all"])
+            .output();
+
+        match output {
+            Ok(out) => {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .count() as u32
+            }
+            Err(_) => 0,
+        }
+    }
 }

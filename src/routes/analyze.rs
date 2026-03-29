@@ -13,18 +13,12 @@ pub struct ApiError {
 }
 
 fn bad_request(msg: &str) -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(ApiError { error: msg.to_string() }),
-    )
+    (StatusCode::BAD_REQUEST, Json(ApiError { error: msg.to_string() }))
 }
 
 #[allow(dead_code)]
 fn internal_error(msg: &str) -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiError { error: msg.to_string() }),
-    )
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: msg.to_string() }))
 }
 
 pub async fn analyze_repo(
@@ -42,20 +36,23 @@ pub async fn analyze_repo(
         .map_err(|e| bad_request(&e))?;
 
     let last_commit_days = git.last_commit_days(&repo_path);
+    let contributors = git.count_contributors(&repo_path);
 
     let mut result = analyzer.analyze(&repo_path, &payload.repo_url, last_commit_days);
+    result.contributors = contributors;
 
     let readme = analyzer.read_readme(&repo_path);
     let context = analyzer.build_ai_context(&result, readme);
 
-    let summary = state.ai_service.summarize(&context)
+    let ai_analysis = state.ai_service.analyze(&context)
         .await
-        .unwrap_or_else(|e| {
+        .map_err(|e| {
             tracing::warn!("Gemini falló: {}", e);
-            "No se pudo generar resumen automático.".to_string()
-        });
+            None::<()>
+        })
+        .ok();
 
-    result.summary = summary;
+    result.ai = ai_analysis;
 
     git.cleanup(&repo_path);
 

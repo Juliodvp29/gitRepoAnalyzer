@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde_json::json;
+use crate::models::AiAnalysis;
 
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
@@ -16,14 +17,10 @@ impl AiService {
         }
     }
 
-    pub async fn summarize(&self, context: &str) -> Result<String, String> {
-        let prompt = format!(
-            "Eres un asistente que analiza repositorios de código. \
-             Basándote en esta información del repositorio, genera un resumen \
-             conciso (máximo 3 oraciones) explicando qué hace el proyecto, \
-             su estado y una recomendación:\n\n{}",
-            context
-        );
+    pub async fn analyze(&self, context: &str) -> Result<AiAnalysis, String> {
+        let prompt_template = std::env::var("AI_PROMPT")
+            .expect("AI_PROMPT not found in environment");
+        let prompt = prompt_template.replace("{}", context);
 
         let body = json!({
             "contents": [{
@@ -45,13 +42,22 @@ impl AiService {
             .await
             .map_err(|e| format!("Error al parsear respuesta: {}", e))?;
 
-        tracing::info!("Respuesta de Gemini: {}", json);
-
-        let text = json["candidates"][0]["content"]["parts"][0]["text"]
+        let raw_text = json["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
-            .unwrap_or("No se pudo generar un resumen.")
+            .unwrap_or("")
+            .trim()
             .to_string();
 
-        Ok(text)
+        let clean = raw_text
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+            .to_string();
+
+        let analysis: AiAnalysis = serde_json::from_str(&clean)
+            .map_err(|e| format!("Error al parsear JSON de Gemini: {}. Respuesta: {}", e, clean))?;
+
+        Ok(analysis)
     }
 }
