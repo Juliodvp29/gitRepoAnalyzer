@@ -1,29 +1,40 @@
 use axum::{extract::State, http::StatusCode, Json};
+use axum::extract::ConnectInfo;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use crate::models::{CompareRequest, CompareResponse};
-use crate::routes::analyze::AppState;
+use crate::routes::analyze::{AppState, ApiError};
 use crate::services::{git::GitService, analyzer::AnalyzerService};
 
 pub async fn compare_repos(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CompareRequest>,
-) -> Result<Json<CompareResponse>, (StatusCode, Json<crate::routes::analyze::ApiError>)> {
+) -> Result<Json<CompareResponse>, (StatusCode, Json<ApiError>)> {
+
+    let ip = addr.ip().to_string();
+    if !state.rate_limiter.check(&ip) || !state.rate_limiter.check(&ip) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ApiError { error: "Demasiadas solicitudes. Intenta de nuevo en unos minutos.".to_string() })
+        ));
+    }
 
     let git = GitService::new();
     let analyzer = AnalyzerService::new();
 
     git.validate_url(&payload.repo_a)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(crate::routes::analyze::ApiError { error: e })))?;
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
     git.validate_url(&payload.repo_b)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(crate::routes::analyze::ApiError { error: e })))?;
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
 
     let path_a = git.clone_repo(&payload.repo_a)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(crate::routes::analyze::ApiError { error: e })))?;
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
 
     let path_b = git.clone_repo(&payload.repo_b)
         .map_err(|e| {
             git.cleanup(&path_a);
-            (StatusCode::BAD_REQUEST, Json(crate::routes::analyze::ApiError { error: e }))
+            (StatusCode::BAD_REQUEST, Json(ApiError { error: e }))
         })?;
 
     let last_commit_a = git.last_commit_days(&path_a);

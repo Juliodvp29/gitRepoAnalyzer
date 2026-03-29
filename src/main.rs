@@ -1,13 +1,16 @@
 use std::sync::Arc;
+use std::net::SocketAddr;
 use axum::Router;
 use tower_http::cors::CorsLayer;
 
 mod routes;
 mod models;
 mod services;
+mod rate_limiter;
 
 use routes::{AppState, create_router};
 use services::ai::AiService;
+use rate_limiter::RateLimiter;
 
 #[tokio::main]
 async fn main() {
@@ -19,6 +22,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         ai_service: AiService::new(api_key),
+        rate_limiter: RateLimiter::new(5, 600),
     });
 
     let app = Router::new()
@@ -31,5 +35,10 @@ async fn main() {
 
     tracing::info!("Servidor corriendo en http://localhost:3000");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>()
+    )
+        .await
+        .unwrap();
 }
