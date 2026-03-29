@@ -1,6 +1,6 @@
 use reqwest::Client;
 use serde_json::json;
-use crate::models::AiAnalysis;
+use crate::models::{AiAnalysis, AiComparison};
 
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
@@ -59,5 +59,49 @@ impl AiService {
             .map_err(|e| format!("Error al parsear JSON de Gemini: {}. Respuesta: {}", e, clean))?;
 
         Ok(analysis)
+    }
+
+    pub async fn compare(&self, context_a: &str, context_b: &str) -> Result<AiComparison, String> {
+        let prompt_template = std::env::var("AI_COMPARE_PROMPT")
+            .expect("AI_COMPARE_PROMPT not found in environment");
+        let prompt = prompt_template.replace("{}", context_a).replace("{}", context_b);
+
+        let body = serde_json::json!({
+            "contents": [{
+                "parts": [{
+                    "text": prompt
+                }]
+            }]
+        });
+
+        let response = self.client
+            .post(format!("{}?key={}", GEMINI_URL, self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Error al llamar a Gemini: {}", e))?;
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Error al parsear respuesta: {}", e))?;
+
+        let raw_text = json["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        let clean = raw_text
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+            .to_string();
+
+        let comparison: crate::models::AiComparison = serde_json::from_str(&clean)
+            .map_err(|e| format!("Error al parsear JSON de Gemini: {}. Respuesta: {}", e, clean))?;
+
+        Ok(comparison)
     }
 }

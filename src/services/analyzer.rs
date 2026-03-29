@@ -18,6 +18,7 @@ impl AnalyzerService {
         let total_lines = self.count_lines(repo_path);
         let dependency_count = self.count_dependencies(repo_path);
         let (has_license, license_type) = self.detect_license(repo_path);
+        let code_smells = self.detect_code_smells(repo_path);
         let score = self.calculate_score(has_readme, has_tests, &technologies, last_commit_days);
 
         AnalyzeResponse {
@@ -35,10 +36,10 @@ impl AnalyzerService {
             last_commit_days,
             contributors: 0,
             score,
+            code_smells,
             ai: None,
         }
     }
-
 
     fn file_exists(&self, base: &PathBuf, names: &[&str]) -> bool {
         names.iter().any(|name| base.join(name).exists())
@@ -369,5 +370,170 @@ impl AnalyzerService {
             response.score,
             readme_section,
         )
+    }
+
+
+    pub fn detect_code_smells(&self, base: &PathBuf) -> Vec<crate::models::CodeSmell> {
+        let mut smells = Vec::new();
+
+        self.check_large_files(base, &mut smells);
+        self.check_todo_fixme(base, &mut smells);
+        self.check_empty_dirs(base, &mut smells);
+        self.check_no_gitignore(base, &mut smells);
+        self.check_committed_env(base, &mut smells);
+        self.check_flat_structure(base, &mut smells);
+
+        smells
+    }
+
+    fn check_large_files(&self, base: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        let code_extensions = ["rs", "js", "ts", "py", "go", "java", "cs", "cpp", "c"];
+
+        for path in self.walk_files(base) {
+            let is_code = path.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| code_extensions.contains(&e))
+                .unwrap_or(false);
+
+            if !is_code { continue; }
+
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let lines = content.lines().count();
+                if lines > 300 {
+                    let relative = path.strip_prefix(base).unwrap_or(&path);
+                    smells.push(crate::models::CodeSmell {
+                        kind: "large_file".to_string(),
+                        location: self.normalize_path(relative),
+                        detail: format!("Archivo con {} líneas. Considerar dividirlo en módulos más pequeños.", lines),
+                    });
+                }
+            }
+        }
+    }
+
+    fn check_todo_fixme(&self, base: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        let code_extensions = ["rs", "js", "ts", "py", "go", "java", "cs", "cpp", "c"];
+        let mut total_todos = 0;
+        let mut files_with_todos: Vec<String> = Vec::new();
+
+        for path in self.walk_files(base) {
+            let is_code = path.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| code_extensions.contains(&e))
+                .unwrap_or(false);
+
+            if !is_code { continue; }
+
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let count = content
+                    .lines()
+                    .filter(|l| {
+                        let upper = l.to_uppercase();
+                        upper.contains("TODO") || upper.contains("FIXME") || upper.contains("HACK")
+                    })
+                    .count();
+
+                if count > 0 {
+                    total_todos += count;
+                    let relative = path.strip_prefix(base).unwrap_or(&path);
+                    files_with_todos.push(self.normalize_path(relative));
+                }
+            }
+        }
+
+        if total_todos > 0 {
+            smells.push(crate::models::CodeSmell {
+                kind: "pending_work".to_string(),
+                location: files_with_todos.join(", "),
+                detail: format!("{} comentarios TODO/FIXME/HACK encontrados en {} archivo(s).", total_todos, files_with_todos.len()),
+            });
+        }
+    }
+
+    fn check_empty_dirs(&self, base: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        self.find_empty_dirs(base, base, smells);
+    }
+
+    fn find_empty_dirs(&self, base: &PathBuf, current: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        let Ok(entries) = std::fs::read_dir(current) else { return };
+        let entries: Vec<_> = entries.flatten().collect();
+
+        let has_files = entries.iter().any(|e| e.path().is_file());
+        let subdirs: Vec<_> = entries.iter().filter(|e| e.path().is_dir()).collect();
+
+        if !has_files && subdirs.is_empty() {
+            let relative = current.strip_prefix(base).unwrap_or(current);
+            let name = relative.to_string_lossy().to_string();
+            if !name.is_empty() && name != ".git" {
+                smells.push(crate::models::CodeSmell {
+                    kind: "empty_directory".to_string(),
+                    location: name,
+                    detail: "Directorio vacío. Puede eliminarse o completarse.".to_string(),
+                });
+            }
+        }
+
+        for entry in &subdirs {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == ".git" || name == "node_modules" || name == "target" {
+                continue;
+            }
+            self.find_empty_dirs(base, &path, smells);
+        }
+    }
+
+    fn check_no_gitignore(&self, base: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        if !base.join(".gitignore").exists() {
+            smells.push(crate::models::CodeSmell {
+                kind: "missing_gitignore".to_string(),
+                location: "/".to_string(),
+                detail: "No se encontró .gitignore. Podrían subirse archivos sensibles o innecesarios al repositorio.".to_string(),
+            });
+        }
+    }
+
+    fn check_committed_env(&self, base: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        let dangerous = [".env", ".env.local", ".env.production"];
+        for file in &dangerous {
+            if base.join(file).exists() {
+                smells.push(crate::models::CodeSmell {
+                    kind: "exposed_env".to_string(),
+                    location: file.to_string(),
+                    detail: format!("Archivo {} encontrado en el repositorio. Puede contener credenciales o secretos expuestos.", file),
+                });
+            }
+        }
+    }
+
+    fn check_flat_structure(&self, base: &PathBuf, smells: &mut Vec<crate::models::CodeSmell>) {
+        let src = base.join("src");
+        let check_path = if src.exists() { &src } else { base };
+
+        let Ok(entries) = std::fs::read_dir(check_path) else { return };
+        let entries: Vec<_> = entries.flatten().collect();
+
+        let code_files = entries.iter().filter(|e| {
+            let path = e.path();
+            if !path.is_file() { return false; }
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ["rs","js","ts","py","go","java"].contains(&ext))
+                .unwrap_or(false)
+        }).count();
+
+        let has_subdirs = entries.iter().any(|e| e.path().is_dir());
+
+        if code_files > 10 && !has_subdirs {
+            smells.push(crate::models::CodeSmell {
+                kind: "flat_structure".to_string(),
+                location: if src.exists() { "src/" } else { "/" }.to_string(),
+                detail: format!("{} archivos de código en un solo directorio sin subcarpetas. Considerar organizar en módulos.", code_files),
+            });
+        }
+    }
+
+    fn normalize_path(&self, path: &std::path::Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
     }
 }
