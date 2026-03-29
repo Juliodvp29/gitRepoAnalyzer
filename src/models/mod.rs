@@ -12,5 +12,6 @@ pub struct AnalyzeResponse {
     pub has_readme: bool,
     pub has_tests: bool,
     pub score: u8,
+    pub last_commit_days: Option<u64>,
     pub summary: String,
 }
