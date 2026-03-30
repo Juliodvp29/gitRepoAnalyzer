@@ -5,6 +5,7 @@ Herramienta que analiza repositorios públicos de GitHub y genera un reporte det
 ## ¿Qué hace?
 
 Dado una URL de GitHub, el backend:
+
 - Clona el repositorio temporalmente
 - Analiza su estructura, archivos y dependencias
 - Detecta tecnologías, lenguaje dominante, licencia y estado general
@@ -33,7 +34,35 @@ Crea un archivo `.env` en la raíz del proyecto:
 GEMINI_API_KEY=tu_api_key_aqui
 ```
 
-## Correr el servidor
+### Usando Docker Compose (Recomendado)
+
+1. Asegúrate de tener Docker y Docker Compose instalados.
+2. Crea el archivo `.env` con tu API key.
+3. Ejecuta:
+
+```bash
+docker-compose up
+```
+
+El servidor estará disponible en `http://localhost:3000`.
+
+### Usando Docker directamente
+
+1. Construye la imagen:
+
+```bash
+docker build -t ghan-backend .
+```
+
+2. Ejecuta el contenedor:
+
+```bash
+docker run -p 3000:3000 --env-file .env ghan-backend
+```
+
+## Correr el servidor (sin Docker)
+
+Si prefieres ejecutar directamente con Rust:
 
 ```bash
 cargo run
@@ -50,6 +79,7 @@ El servidor queda disponible en `http://localhost:3000`.
 Verifica que el servidor esté corriendo.
 
 **Respuesta**
+
 ```
 OK
 ```
@@ -61,6 +91,7 @@ OK
 Analiza un repositorio público de GitHub.
 
 **Body**
+
 ```json
 {
   "repo_url": "https://github.com/usuario/repositorio"
@@ -68,6 +99,7 @@ Analiza un repositorio público de GitHub.
 ```
 
 **Respuesta**
+
 ```json
 {
   "repo_url": "https://github.com/usuario/repositorio",
@@ -96,28 +128,25 @@ Analiza un repositorio público de GitHub.
     "complexity": "high",
     "category": "tool",
     "difficulty": "advanced",
-    "suggestions": [
-      "Agregar tests unitarios.",
-      "Añadir una licencia."
-    ]
+    "suggestions": ["Agregar tests unitarios.", "Añadir una licencia."]
   }
 }
 ```
 
 **Campos de `ai`**
 
-| Campo | Valores posibles |
-|---|---|
-| `complexity` | `low` `medium` `high` |
-| `category` | `cli` `api` `library` `web-app` `game` `tool` `other` |
-| `difficulty` | `beginner` `intermediate` `advanced` |
+| Campo        | Valores posibles                                      |
+| ------------ | ----------------------------------------------------- |
+| `complexity` | `low` `medium` `high`                                 |
+| `category`   | `cli` `api` `library` `web-app` `game` `tool` `other` |
+| `difficulty` | `beginner` `intermediate` `advanced`                  |
 
 **Errores**
 
-| Código | Motivo |
-|---|---|
-| `400` | URL inválida, no es de GitHub, o repo no encontrado |
-| `429` | Límite de requests alcanzado (5 por cada 10 minutos) |
+| Código | Motivo                                               |
+| ------ | ---------------------------------------------------- |
+| `400`  | URL inválida, no es de GitHub, o repo no encontrado  |
+| `429`  | Límite de requests alcanzado (5 por cada 10 minutos) |
 
 ---
 
@@ -126,6 +155,7 @@ Analiza un repositorio público de GitHub.
 Compara dos repositorios públicos de GitHub y devuelve un veredicto generado por IA.
 
 **Body**
+
 ```json
 {
   "repo_a": "https://github.com/usuario/repo-uno",
@@ -153,13 +183,13 @@ Devuelve el análisis completo de cada repo más un objeto `comparison`:
 
 **Campos de `comparison`**
 
-| Campo | Descripción |
-|---|---|
-| `verdict` | Cuál repo está mejor: `repo_a`, `repo_b` o `tie` |
-| `reason` | Justificación del veredicto |
-| `repo_a_strengths` | Fortalezas específicas del repo A |
-| `repo_b_strengths` | Fortalezas específicas del repo B |
-| `recommendation` | Qué hacer con cada repositorio |
+| Campo              | Descripción                                      |
+| ------------------ | ------------------------------------------------ |
+| `verdict`          | Cuál repo está mejor: `repo_a`, `repo_b` o `tie` |
+| `reason`           | Justificación del veredicto                      |
+| `repo_a_strengths` | Fortalezas específicas del repo A                |
+| `repo_b_strengths` | Fortalezas específicas del repo B                |
+| `recommendation`   | Qué hacer con cada repositorio                   |
 
 **Nota:** comparar cuenta como 2 requests para el rate limiter.
 
